@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+  
+  <title>mem2reg</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta property="og:type" content="website">
+<meta property="og:title" content="mem2reg">
+<meta property="og:url" content="http://zq54zquan.github.io/index.html">
+<meta property="og:site_name" content="mem2reg">
+<meta property="og:locale">
+<meta property="article:author" content="zq">
+<meta name="twitter:card" content="summary">
+  
+    <link rel="alternate" href="/atom.xml" title="mem2reg" type="application/atom+xml">
+  
+  
+    <link rel="shortcut icon" href="/favicon.png">
+  
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+  
+    
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.min.css">
+
+  
+  
+<meta name="generator" content="Hexo 7.0.0"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">mem2reg</a>
+      </h1>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"><span class="fa fa-bars"></span></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+        
+          <a class="nav-icon" href="/atom.xml" title="RSS Feed"><span class="fa fa-rss"></span></a>
+        
+        <a class="nav-icon nav-search-btn" title="Suche"><span class="fa fa-search"></span></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="Suche"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="http://zq54zquan.github.io"></form>
+      </div>
+    </div>
+  </div>
+</header>
+
+      <div class="outer">
+        <section id="main">
+  
+    <article id="post-MachineBlockPlacement" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
+  <div class="article-meta">
+    <a href="/2023/12/10/MachineBlockPlacement/" class="article-date">
+  <time class="dt-published" datetime="2023-12-09T17:17:54.330Z" itemprop="datePublished">2023-12-10</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+    <div class="e-content article-entry" itemprop="articleBody">
+      
+        <p>[toc]</p>
+<h1 id="MachineBlockReplacement"><a href="#MachineBlockReplacement" class="headerlink" title="MachineBlockReplacement"></a>MachineBlockReplacement</h1><h2 id="runOnMachineFucntion"><a href="#runOnMachineFucntion" class="headerlink" title="runOnMachineFucntion"></a>runOnMachineFucntion</h2><p>首先判断函数是否为单MBB函数，很显然，如果是单MBB就不需要做变换了</p>
+<h3 id="buildCFGChians"><a href="#buildCFGChians" class="headerlink" title="buildCFGChians"></a>buildCFGChians</h3><p>先分析下分支分析的代码，主要是TargetInstrInfo的<code>analyseBranch</code>和MachineBasicBlock的<code>canFallThrough</code></p>
+<h4 id="analyseBranch"><a href="#analyseBranch" class="headerlink" title="analyseBranch"></a>analyseBranch</h4><figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br></pre></td><td class="code"><pre><span class="line"></span><br><span class="line"> *<span class="comment">///* *Analyze the branching code at the end of MBB, returning*</span></span><br><span class="line"></span><br><span class="line">*<span class="comment">///* *true if it cannot be understood (e.g. it&#x27;s a switch dispatch or isn&#x27;t*</span></span><br><span class="line"></span><br><span class="line"> *<span class="comment">///* *implemented for a target).  Upon success, this returns false and returns*</span></span><br><span class="line"></span><br><span class="line"> *<span class="comment">///* *with the following information in various cases:*</span></span><br><span class="line"></span><br><span class="line"> *<span class="comment">///*</span></span><br><span class="line"></span><br><span class="line"> *<span class="comment">///* *1. If this block ends with no branches (it just falls through to its succ)*</span></span><br><span class="line"></span><br><span class="line"> *<span class="comment">///*    *just return false, leaving TBB/FBB null.*</span></span><br><span class="line"></span><br><span class="line"> *<span class="comment">///* *2. If this block ends with only an unconditional branch, it sets TBB to be*</span></span><br><span class="line"></span><br><span class="line"> *<span class="comment">///*    *the destination block.*</span></span><br><span class="line"></span><br><span class="line"> *<span class="comment">///* *3. If this block ends with a conditional branch and it falls through to a*</span></span><br><span class="line"></span><br><span class="line"> *<span class="comment">///*    *successor block, it sets TBB to be the branch destination block and a*</span></span><br><span class="line"></span><br><span class="line"> *<span class="comment">///*    *list of operands that evaluate the condition. These operands can be*</span></span><br><span class="line"></span><br><span class="line"> *<span class="comment">///*    *passed to other TargetInstrInfo methods to create new branches.*</span></span><br><span class="line"></span><br><span class="line"> *<span class="comment">///* *4. If this block ends with a conditional branch followed by an*</span></span><br><span class="line"></span><br><span class="line"> *<span class="comment">///*    *unconditional branch, it returns the &#x27;true&#x27; destination in TBB, the*</span></span><br><span class="line"></span><br><span class="line"> *<span class="comment">///*    *&#x27;false&#x27; destination in FBB, and a list of operands that evaluate the*</span></span><br><span class="line"></span><br><span class="line"> *<span class="comment">///*    *condition.  These operands can be passed to other TargetInstrInfo*</span></span><br><span class="line"></span><br><span class="line"> *<span class="comment">///*    *methods to create new branches.*</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>超类中的注释表明了这个函数的作用，分析BB的分支跳转，检查是否可以分析，如果可以分析，就返回代码中的跳转信息；</p>
+<p>我们这里以RSICV来举例:</p>
+<p>获取MBB中最后一条不是debug指令，如果指令不是结束指令，那么返回false，符合场景1.直接返回<code>false</code></p>
+<p>之后获取最后一条指令的反向迭代器，从后向前遍历MBB中的指令，如果发现了一条终结指令，将<code>NumTerminators++</code>，并且终结指令是一条非条件跳转或者是一个非直接跳转，那么将<code>FirstUncondOrIndirectBr</code>设置成该指令的正向迭代器;</p>
+<p>如果返现最后一条指令是一个非直接跳转(可以认为跳转指令的目的是一个非立即数，一般为寄存器的值)，在RSCV中认为这种场景无法处理，故返回<code>true</code></p>
+<p>如果终结指令数<code>NumTerminators</code>个数超多2个(注意是超过2，可以是2， 这里是MBB和BB的一个区别，要小心)，那么返回true，这种可以认为是有问题的MBB，无法处理</p>
+<p>如果<code>NumTerminators</code>是1，并且终结指令是一个非条件跳转，符合场景2，就返回<code>false</code>并将<code>TrueBB</code>设置为跳转指令的目的BB;</p>
+<p>如果只有一个终结指令，并且这个终结指令是条件跳转，那么返回<code>false</code>,符合场景3， <code>TrueBB</code>被设置为这条指令的第二个操作数(这个和目标后端的视线有关)；并且将指令的Opcode对应的操作数(COND条件对应Opcode)，并将指令的操作数0,1都存入操作数的vector中;</p>
+<p>如果有两个终结指令，并且前一条指令是条件跳转，本指令是非条件跳转，符合场景4，那么返回<code>false</code>,将最后一条指令(无条件跳转指令)的目的BB设置为<code>FalseBB</code>,  前一条指令(条件跳转指令)的目的BB设置为<code>TrueBB</code>, </p>
+<p>指令判断流程图：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">graph TB</span><br><span class="line">A[begin] --&gt; B[获取最后一条指令] --&gt; C&#123;是否为终结指令&#125;--&gt; |否|D[返回false]</span><br><span class="line">C --是--&gt; E[反向遍历BB中的终结指令] --&gt; G[numTerminators++] --&gt; H&#123;是否为非条件跳转，或者间接跳转&#125; --是--&gt; I[FirstUncondOrIndirectBr = Inst] --&gt; J</span><br><span class="line">H --&gt;|否|J</span><br><span class="line">J&#123;最后一条终结指令是间接跳转&#125; --是--&gt; 返回true</span><br><span class="line">J --&gt;|否| K&#123;是否超过两条终结指令&#125; --&gt; |是| 返回true</span><br><span class="line">K --&gt; |否|L&#123;一条终结指令，且为非条件跳转&#125; --&gt; |是| M[TBB = 终结指令的目的BB] --&gt; D</span><br><span class="line">L --否--&gt; M&#123;两条终结指令，前一条为条件跳转，后一条为非条件跳转&#125; --否--&gt; 返回ture</span><br><span class="line">M --是--&gt; N[前一条的目的BB为TrueBB,后一条的目的为FalseBB] --&gt; D</span><br></pre></td></tr></table></figure>
+
+<h4 id="canFallThrough"><a href="#canFallThrough" class="headerlink" title="canFallThrough"></a>canFallThrough</h4><p>该函数为MBB的实例函数，直接调用<code>getFallThrough</code>,</p>
+<p>首先获取该MBB的迭代器的，如果本身已经是最后一个MBB，返回nullptr；</p>
+<p>获取本身的下一个MBB迭代器，如果下一个MBB迭代器不是本身的后继，返回nullptr;</p>
+<p>如果调用<code>analyzeBranch</code>返回<code>true</code>, 且MBB是空BB，或者最后一个指令不是一个Barrier或者是一个可预测指令,那么返回这个MBB的下一个MBB的迭代器</p>
+<p>如果<code>analyzeBranch</code>中返回的TBB为空，那么说明是MBB无跳转，那么下一个MBB必然是他的FallThrough</p>
+<p>如果TrueBB或者FalseBB和下一个BB迭代器相等，那么也返回下一个迭代器;</p>
+<p>如果是一个非条件跳转,并且TrueBB也不等于下一个MBB，那么返回nullptr;</p>
+<p>其他情况下，如果是一个条件跳转且没有FalseBB,那么下一个BB必然是FallThroughBB，返回下一个MBB的迭代器</p>
+<h4 id="构建Chain"><a href="#构建Chain" class="headerlink" title="构建Chain"></a>构建Chain</h4><p>遍历MachineFunction中的MBB, 建立一个BlockChain的实例，并用MBB作为Key，放入BlockToChain的Map中；</p>
+<p>对每一个MBB调用上面的两个函数,如果可以分析或者MBB是非FallThrough的，继续分析下一个MBB,否则以下一个MBB迭代器调用BlockChain的merge函数，将下一个MBB加入Blocks中，并将下一个BB的BlockToChain的值改为本BB的这个BlockChain，外层大循环也会跳过。</p>
+<p><strong>最终的效果</strong>:为所有的连续的不能分析的或者不能FallThrough的MBB打包成一个Chain，而可以分析且能FallThrough的MBB会各自对应一个Chain</p>
+<h3 id="optimizeBranches"><a href="#optimizeBranches" class="headerlink" title="optimizeBranches"></a>optimizeBranches</h3><h4 id="分析过程中的死分支跳转指令删除"><a href="#分析过程中的死分支跳转指令删除" class="headerlink" title="分析过程中的死分支跳转指令删除"></a>分析过程中的死分支跳转指令删除</h4><p>遍历首BB对应的BlockToChain中的MBB，调用analyzeBranch会传入可以修改参数为<code>true</code>,表示在分析过程中可以修改MBB；</p>
+<p>这里重新看下如果可修改MBB，在函数<code>analyzeBranch</code>的影响是什么</p>
+<p>如果发现MBB中的存在非条件跳转指令，或者是间接跳转指令，那么如果这条指令后边还有其他指令，可以将这条指令之后的指令删除掉，并将<code>NumberTerminator--</code>，并将最后一条指令设置为该指令</p>
+<p>这里可以看到，在MBB中倒数第二条指令如果是非条件跳转或者间接跳转指令，那么必然是<strong>DeadCode</strong></p>
+<p>最终形成以下几种情况</p>
+<ol>
+<li><p>无跳转;</p>
+</li>
+<li><p>一条非条件跳转</p>
+</li>
+<li><p>一条条件跳转</p>
+</li>
+<li><p>一条条件跳转 + 一条非条件跳转</p>
+<h4 id="分支交换"><a href="#分支交换" class="headerlink" title="分支交换"></a>分支交换</h4><p>如果MBB可以分析，并且有TBB，也有FBB(上述情况4)，且FalseBB的概率要高于TrueBB,交换分支。</p>
+</li>
+</ol>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://zq54zquan.github.io/2023/12/10/MachineBlockPlacement/" data-id="clq2mq2q70000ic6vgihbbgk5" data-title="" class="article-share-link"><span class="fa fa-share">Teilen</span></a>
+      
+      
+      
+    </footer>
+  </div>
+  
+</article>
+
+
+
+  
+
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+
+  
+    
+
+  
+    
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Archiv</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2023/12/">December 2023</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">letzter Beitrag</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2023/12/10/MachineBlockPlacement/">(no title)</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      
+      &copy; 2023 zq<br>
+      Powered by <a href="https://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+
+<script src="/js/jquery-3.6.4.min.js"></script>
+
+
+
+  
+<script src="/fancybox/jquery.fancybox.min.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+
+  </div>
+</body>
+</html>
