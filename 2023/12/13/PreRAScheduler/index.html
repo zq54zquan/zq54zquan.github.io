@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    
+
+    
+<script>!function(){var e=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches,t=localStorage.getItem("use-color-scheme")||"auto";("dark"===t||e&&"light"!==t)&&document.documentElement.classList.toggle("dark",!0)}()</script>
+    
+
+<meta charset="utf-8" >
+
+<title>PreRAScheduler</title>
+<meta name="keywords" content="PreRAScheduler, mem2reg">
+<meta name="description" content="背景最近工作中基于LLVMPostRASchedulerList中实现了一套计算代码理论并行度的分析Pass, 现在对PostRA的调度方法已经比较了解了，于是就对PreRA的调度产生了兴趣，之前在阅读指令选择的代码的时候，也稍微看了一点，">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta property="og:title" content="PreRAScheduler">
+<meta property="og:description" content="背景最近工作中基于LLVMPostRASchedulerList中实现了一套计算代码理论并行度的分析Pass, 现在对PostRA的调度方法已经比较了解了，于是就对PreRA的调度产生了兴趣，之前在阅读指令选择的代码的时候，也稍微看了一点，">
+
+<link rel="shortcut icon" href="/favicon.ico">
+<link rel="stylesheet" href="/style/main.css">
+
+  <meta name="generator" content="Hexo 7.0.0"></head>
+  <body>
+    <div id="app" class="main">
+
+<div class="site-header-container">
+  <div class="site-header">
+    <div class="left">
+      <a href="http://zq54zquan.github.io">
+        <img class="avatar" src="/images/avatar.png" alt="logo" width="32px" height="32px">
+      </a>
+      <a href="http://zq54zquan.github.io">
+        <h1 class="site-title">mem2reg</h1>
+      </a>
+    </div>
+    <div class="right">
+        <i class="icon menu-switch icon-menu-outline" ></i>
+    </div>
+  </div>
+</div>
+
+<div class="menu-container" style="height: 0;opacity: 0;">
+<nav class="menu-list">
+  
+    
+      <a href="/" class="menu purple-link">
+        首页
+      </a>
+    
+  
+    
+      <a href="/tags" class="menu purple-link">
+        标签
+      </a>
+    
+  
+    
+      <a href="/archives" class="menu purple-link">
+        归档
+      </a>
+    
+  
+    
+      <a href="/about" class="menu purple-link">
+        关于
+      </a>
+    
+  
+</nav>
+</div>
+
+
+
+  <div class="content-container">
+    <div class="post-detail">
+      
+      <h2 class="post-title">PreRAScheduler</h2>
+      <div class="post-info post-detail-info">
+        <span><i class="icon icon-calendar-outline"></i> 2023-12-13</span>
+        
+          <span>
+          <i class="icon icon-pricetags-outline"></i>
+            
+              <a href="/tags/LLVM/">
+              LLVM
+                
+                  ，
+                
+              </a>
+            
+              <a href="/tags/%E6%8C%87%E4%BB%A4%E8%B0%83%E5%BA%A6/">
+              指令调度
+                
+              </a>
+            
+          </span>
+        
+      </div>
+      <div class="post-content-wrapper">
+        <div class="post-content">
+          <h2 id="背景"><a href="#背景" class="headerlink" title="背景"></a>背景</h2><p>最近工作中基于LLVM<code>PostRASchedulerList</code>中实现了一套计算代码理论并行度的分析Pass, 现在对<code>PostRA</code>的调度方法已经比较了解了，于是就对<code>PreRA</code>的调度产生了兴趣，之前在阅读指令选择的代码的时候，也稍微看了一点，不过当时不是特意去看，所以也看的不够系统，最近也想抽出点时间好好的梳理一遍这里的代码。</p>
+<h2 id="原理"><a href="#原理" class="headerlink" title="原理"></a>原理</h2><p>顾名思义，<code>PreRA</code>就是在<code>Register Allocator</code>之前的指令调度，需要做两次次指令调度的原因主要是因为指令调度和寄存器分配是两个互相影响的过程，相爱相杀，这里可以简单的描述下他们的互相影响：</p>
+<ol>
+<li><p>我们都知道指令调度就是要实现在调度中尽可能的并行，那么这里可能需要调整代码的执行顺序，可以将没有依赖关系的指令放在一起运行，提升ILP;这就会影响寄存器的生命周期，影响寄存器分配</p>
+</li>
+<li><p>寄存器分配的主要目标就是减少<code>load/store</code>指令，那么就需要将寄存器的生命周期压缩，让更多的指令直接使用寄存器，如果物理寄存器无法满足指令的需求，就需要做spill，那么就会生成新的指令，从而影响指令调度</p>
+</li>
+</ol>
+<p>这里可以看出指令调度和寄存器分配需要联合求解，这里可以看成是一个多目标问题，这种问题一般都很难多项式时间内求出最优解(也就是传说中的NP完全)，LLVM当前的实现方式是单独求解，但是在寄存器分配前后分别做一次指令调度</p>
+<pre class="mermaid">graph LR;
+... --> instructionselcetion 
+instructionselcetion --> prerascheduler
+prerascheduler --> registerallocate 
+registerallocate --> postraschduler 
+postraschduler --> ....</pre>
+
+<h2 id="源码分析"><a href="#源码分析" class="headerlink" title="源码分析"></a>源码分析</h2><blockquote>
+<p>Talk is cheap, show me the code!</p>
+</blockquote>
+<p>在CodeGen中没有一个单独的所谓的<code>PreRASchedler</code>的Pass，所以通过<code>-mllvm -debug-pass=Structure</code>是找不到这个Pass的.</p>
+<p>调度的主要的类是<code>ScheduleDAGRRList</code>,在<code>Schedule()</code>函数中完成指令调度:</p>
+<pre class="mermaid">graph LR
+A[BuildSchedGraph] --> B[ListSchduleBottomUp]</pre>
+
+<p>其中<code>buildGraph</code>分为3部分:</p>
+<pre class="mermaid">graph LR
+A[ClusterNodes] --> B[BuildSchedUnits]
+B --> C[AddSchedEdges]</pre>
+
+
+
+<p>其中<code>ClusterNodes</code>可以简单理解为将一些依赖链相同的<code>LoadInst</code>，且通过各自后端判定后可以认为基地址一致的指令添加<code>glue</code>的依赖，将他们一起调度，这样可以提高指令$的命中率，从而提升性能；</p>
+
+        </div>
+          
+        <div class="top-div">
+          <ol class="top-box"><li class="top-box-item top-box-level-2"><a class="top-box-link" href="#%E8%83%8C%E6%99%AF"><span class="top-box-text">背景</span></a></li><li class="top-box-item top-box-level-2"><a class="top-box-link" href="#%E5%8E%9F%E7%90%86"><span class="top-box-text">原理</span></a></li><li class="top-box-item top-box-level-2"><a class="top-box-link" href="#%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90"><span class="top-box-text">源码分析</span></a></li></ol>
+        </div>
+          
+      </div>
+    </div>
+
+    
+      <div class="next-post">
+        <a class="purple-link" href="/2023/12/10/machineblockplacement-0/">
+          <h3 class="post-title">
+            下一篇：MachineBlockPlacement分析
+          </h3>
+        </a>
+      </div>
+    
+  </div>
+
+
+
+
+
+
+
+
+
+
+<footer>
+<div class="site-footer">
+  <div class="social-container">
+    
+      
+        <a aria-label="跳转至github" href="https://github.com/zq54zquan" target="_blank">
+          <i class="icon icon-github"></i>
+        </a>
+      
+    
+      
+    
+      
+    
+      
+    
+      
+    
+  </div>
+  
+    Powered by <a href="https://hexo.io/" target="_blank">Hexo</a> <a href="https://github.com/f-dong/hexo-theme-minimalism" target="_blank">Theme</a>
+  
+  
+  
+  
+  
+  
+</div>
+</footer>
+<script src='https://unpkg.com/mermaid@7.1.2/dist/mermaid.min.js'></script>
+  <script>
+    if (window.mermaid) {
+      mermaid.initialize({theme: 'forest'});
+    }
+  </script>
+
+
+      </div>
+    </div>
+    
+<script id="hexo-configurations"> window.theme_config = {"image":{"lazyload_enable":true,"photo_zoom":"simple-lightbox"}}; window.is_post = true; </script>
+
+<script src="/js/main.js"></script>
+
+
+
+
+
+
+  </body>
+</html>
+
