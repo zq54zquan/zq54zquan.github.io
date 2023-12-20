@@ -11,16 +11,16 @@
 
 <title>SVE</title>
 <meta name="keywords" content="SVE, mem2reg">
-<meta name="description" content="背景在学习LLVM中的scalable vector时没有找到具体的后端，之前对SVE久闻大名想到是不是SVE就是对应的后端架构呢？ 
+<meta name="description" content="背景在学习LLVM中的scalable vector时没有找到具体的后端，之前对SVE久闻大名，当时还觉得如何能做到一次编译就能适配不同的后端的不同的scalable的大小呢，想到是不是SVE就是对应的后端架构呢？ 
 
-1&lt; vscale x &lt;# elements&gt; x &lt;elementtype">
+1&lt; vsca">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta property="og:title" content="SVE">
-<meta property="og:description" content="背景在学习LLVM中的scalable vector时没有找到具体的后端，之前对SVE久闻大名想到是不是SVE就是对应的后端架构呢？ 
+<meta property="og:description" content="背景在学习LLVM中的scalable vector时没有找到具体的后端，之前对SVE久闻大名，当时还觉得如何能做到一次编译就能适配不同的后端的不同的scalable的大小呢，想到是不是SVE就是对应的后端架构呢？ 
 
-1&lt; vscale x &lt;# elements&gt; x &lt;elementtype">
+1&lt; vsca">
 
 <link rel="shortcut icon" href="/favicon.ico">
 <link rel="stylesheet" href="/style/main.css">
@@ -66,12 +66,6 @@
       </a>
     
   
-    
-      <a href="/about" class="menu purple-link">
-        关于
-      </a>
-    
-  
 </nav>
 </div>
 
@@ -111,13 +105,13 @@
       </div>
       <div class="post-content-wrapper">
         <div class="post-content">
-          <h2 id="背景"><a href="#背景" class="headerlink" title="背景"></a>背景</h2><p>在学习LLVM中的<code>scalable vector</code>时没有找到具体的后端，之前对SVE久闻大名想到是不是<code>SVE</code>就是对应的后端架构呢？ </p>
+          <h2 id="背景"><a href="#背景" class="headerlink" title="背景"></a>背景</h2><p>在学习LLVM中的<code>scalable vector</code>时没有找到具体的后端，之前对SVE久闻大名，当时还觉得如何能做到一次编译就能适配不同的后端的不同的<code>scalable</code>的大小呢，想到是不是<code>SVE</code>就是对应的后端架构呢？ </p>
 <blockquote>
 <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">&lt; vscale x &lt;<span class="meta"># elements&gt; x <span class="string">&lt;elementtype&gt;</span> &gt; ; Scalable vector</span></span><br></pre></td></tr></table></figure>
 
 <p>For scalable vectors, the total number of elements is a constant multiple (called vscale) of the specified number of elements; vscale is a positive integer that is unknown at compile time and the same hardware-dependent constant for all scalable vectors at run time. The size of a specific scalable vector type is thus constant within IR, even if the exact size in bytes cannot be determined until run time.</p>
 </blockquote>
-<p>按照LLVM Language Reference中的介绍，可以理解为<code>vscale</code>是一个在IR中未知的常理，知道运行时才能根据不同的后端获得到真实值；</p>
+<p>按照LLVM Language Reference中的介绍，可以理解为<code>vscale</code>是一个在IR中未知的常量，直到运行时才能根据不同的后端获得到真实值；</p>
 <p>网上搜了下，之前<code>SVE</code>的开发组在LLVM上正好有一篇介绍<code>SVE</code>的胶片，花几天学习了一下，这里总结下；</p>
 <blockquote>
 <p>记得之前在&lt;&lt;超标量处理器设计&gt;&gt;中看到过SVE的介绍，但是后来回去翻又没有找到，那段时间好像同时在看好几本书，所以可能记混淆了:cry:</p>
