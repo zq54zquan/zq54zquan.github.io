@@ -77,7 +77,7 @@
 
   <div class="current-tag-container">
     <h2 class="title">
-      <i class="icon icon-pricetags-outline"></i> LLVM
+      <i class="icon icon-pricetags-outline"></i> ARM
     </h2>
   </div>
 
@@ -85,93 +85,39 @@
 
 <section class="post-item">
     <div class="content">
-      <a href="/2023/12/14/MachineMemOperand/">
-        <h2 class="post-title">MachineMemOperand</h2>
+      <a href="/2023/12/17/SVE/">
+        <h2 class="post-title">SVE</h2>
       </a>
-      <a href="/2023/12/14/MachineMemOperand/">
+      <a href="/2023/12/17/SVE/">
           <div class="post-abstract">
             
-			    类型定义
-A description of a memory reference used in the backend.Instead of holding a StoreInst or LoadInst, this class hold
+			    [TOC]
+背景在学习LLVM中的scalable vector时没有找到具体的后端，之前对SVE久闻大名想到是不是SVE就是对应的后端架构呢？ 
+
+1&lt; vscale x &lt;# elements&gt; x &lt;eleme
             
           </div>
       </a>
       <div class="post-info">
-        <span><i class="icon icon-calendar-outline"></i> 2023-12-14</span>
+        <span><i class="icon icon-calendar-outline"></i> 2023-12-17</span>
         
           <span>
             <i class="icon icon-pricetags-outline"></i>
             
 
-                LLVM
-                
-            
-          </span>
-        
-      </div>
-    </div>
-  </section>
-
-
-
-<section class="post-item">
-    <div class="content">
-      <a href="/2023/12/14/PreRAScheduler/">
-        <h2 class="post-title">PreRAScheduler</h2>
-      </a>
-      <a href="/2023/12/14/PreRAScheduler/">
-          <div class="post-abstract">
-            
-			    [toc]
-背景最近工作中基于LLVMPostRASchedulerList中实现了一套计算代码理论并行度的分析Pass, 现在对PostRA的调度方法已经比较了解了，于是就对PreRA的调度产生了兴趣，之前在阅读指令选择的代码的时候，也稍
-            
-          </div>
-      </a>
-      <div class="post-info">
-        <span><i class="icon icon-calendar-outline"></i> 2023-12-14</span>
-        
-          <span>
-            <i class="icon icon-pricetags-outline"></i>
-            
-
-                LLVM
+                编译
                 
                   ，
                 
             
 
-                指令调度
+                ARM
+                
+                  ，
                 
             
-          </span>
-        
-      </div>
-    </div>
-  </section>
 
-
-
-<section class="post-item">
-    <div class="content">
-      <a href="/2023/12/10/machineblockplacement-0/">
-        <h2 class="post-title">MachineBlockPlacement分析</h2>
-      </a>
-      <a href="/2023/12/10/machineblockplacement-0/">
-          <div class="post-abstract">
-            
-			    runOnMachineFucntion首先判断函数是否为单MBB函数，很显然，如果是单MBB就不需要做变换了
-buildCFGChians先分析下分支分析的代码，主要是TargetInstrInfo的analyseBranch和Machi
-            
-          </div>
-      </a>
-      <div class="post-info">
-        <span><i class="icon icon-calendar-outline"></i> 2023-12-10</span>
-        
-          <span>
-            <i class="icon icon-pricetags-outline"></i>
-            
-
-                LLVM
+                SIMD
                 
             
           </span>

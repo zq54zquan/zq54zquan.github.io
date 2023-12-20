@@ -108,7 +108,7 @@ buildCFGChians先分析下分支分析的代码，主要是TargetInstrInfo的ana
 <p>如果只有一个终结指令，并且这个终结指令是条件跳转，那么返回<code>false</code>,符合场景3， <code>TrueBB</code>被设置为这条指令的第二个操作数(这个和目标后端的视线有关)；并且将指令的Opcode对应的操作数(COND条件对应Opcode)，并将指令的操作数0,1都存入操作数的vector中;</p>
 <p>如果有两个终结指令，并且前一条指令是条件跳转，本指令是非条件跳转，符合场景4，那么返回<code>false</code>,将最后一条指令(无条件跳转指令)的目的BB设置为<code>FalseBB</code>,  前一条指令(条件跳转指令)的目的BB设置为<code>TrueBB</code>, </p>
 <p>指令判断流程图：</p>
-<pre class="mermaid">graph TB;
+<pre class="mermaid">flowchart TB;
 A[begin] --> B[获取最后一条指令] --> C{是否为终结指令}--> D[返回false]
 C --是--> E[反向遍历BB中的终结指令] --> G[numTerminators++] --> H{是否为非条件跳转，或者间接跳转} --是--> I[FirstUncondOrIndirectBr = Inst] --> J
 H -->|否|J
