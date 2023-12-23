@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    
+
+    
+<script>!function(){var e=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches,t=localStorage.getItem("use-color-scheme")||"auto";("dark"===t||e&&"light"!==t)&&document.documentElement.classList.toggle("dark",!0)}()</script>
+    
+
+<meta charset="utf-8" >
+
+<title>LLVM中的循环</title>
+<meta name="keywords" content="LLVM中的循环, mem2reg">
+<meta name="description" content="重要性众所周知，循环是一个常用的控制结构，是构成一个图灵完备的语言重要的结构之一。同时现代编译器的也会对循环做重点优化，这很好理解，代码中的循环一般来说都是开销很大的代码区段，根据阿姆达尔原理，不管是业务代码，还是编译器，甚至是硬件都应该首">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta property="og:title" content="LLVM中的循环">
+<meta property="og:description" content="重要性众所周知，循环是一个常用的控制结构，是构成一个图灵完备的语言重要的结构之一。同时现代编译器的也会对循环做重点优化，这很好理解，代码中的循环一般来说都是开销很大的代码区段，根据阿姆达尔原理，不管是业务代码，还是编译器，甚至是硬件都应该首">
+
+<link rel="shortcut icon" href="/favicon.ico">
+<link rel="stylesheet" href="/style/main.css">
+
+  <link rel="stylesheet" href="/style/simple-lightbox.min.css"><meta name="generator" content="Hexo 7.0.0"></head>
+  <body>
+    <div id="app" class="main">
+
+<div class="site-header-container">
+  <div class="site-header">
+    <div class="left">
+      <a href="http://zq54zquan.github.io">
+        <img class="avatar" src="/images/avatar.png" alt="logo" width="32px" height="32px">
+      </a>
+      <a href="http://zq54zquan.github.io">
+        <h1 class="site-title">mem2reg</h1>
+      </a>
+    </div>
+    <div class="right">
+        <i class="icon menu-switch icon-menu-outline" ></i>
+    </div>
+  </div>
+</div>
+
+<div class="menu-container" style="height: 0;opacity: 0;">
+<nav class="menu-list">
+  
+    
+      <a href="/" class="menu purple-link">
+        首页
+      </a>
+    
+  
+    
+      <a href="/tags" class="menu purple-link">
+        标签
+      </a>
+    
+  
+    
+      <a href="/archives" class="menu purple-link">
+        归档
+      </a>
+    
+  
+</nav>
+</div>
+
+
+
+  <div class="content-container">
+    <div class="post-detail">
+      
+      <h2 class="post-title">LLVM中的循环</h2>
+      <div class="post-info post-detail-info">
+        <span><i class="icon icon-calendar-outline"></i> 2023-12-24</span>
+        
+          <span>
+          <i class="icon icon-pricetags-outline"></i>
+            
+              <a href="/tags/LLVM/">
+              LLVM
+                
+                  ，
+                
+              </a>
+            
+              <a href="/tags/%E7%BC%96%E8%AF%91/">
+              编译
+                
+                  ，
+                
+              </a>
+            
+              <a href="/tags/%E5%BE%AA%E7%8E%AF/">
+              循环
+                
+              </a>
+            
+          </span>
+        
+      </div>
+      <div class="post-content-wrapper">
+        <div class="post-content">
+          <h2 id="重要性"><a href="#重要性" class="headerlink" title="重要性"></a>重要性</h2><p>众所周知，循环是一个常用的控制结构，是构成一个图灵完备的语言重要的结构之一。同时现代编译器的也会对循环做重点优化，这很好理解，代码中的循环一般来说都是开销很大的代码区段，根据<a target="_blank" rel="noopener" href="https://zh.wikipedia.org/zh-cn/%E9%98%BF%E5%A7%86%E8%BE%BE%E5%B0%94%E5%AE%9A%E5%BE%8B">阿姆达尔原理</a>，不管是业务代码，还是编译器，甚至是硬件都应该首先优化这些对性能影响巨大的代码;</p>
+<p>本文我们首先需要理解LLVM中循环的定义(这里主要参考的是<a target="_blank" rel="noopener" href="https://llvm.org/docs/LoopTerminology.html">LLVM的官方文档</a>），后续对应到LLVM代码中，如何去存储循环，以及对于循环的优化也会分析。</p>
+<blockquote>
+<p>这里基本是对文档的翻译，首先了解下概念中的LLVM的循环，之后会到<code>LoopInfo</code>中去看代码，计划还会去看Loop相关的一些Pass，比如Rotate Loop，Simplify等，最后还会去看一些优化Pass，如LICM等等</p>
+</blockquote>
+<h2 id="循环的定义"><a href="#循环的定义" class="headerlink" title="循环的定义"></a>循环的定义</h2><p>在LLVM中，在CFG中检测循环的实现是在文件<code>LoopInfo</code>(这里有一个Pass，<code>LoopInfoWrapperPass</code>)</p>
+<p>CFG中，符合下列条件的一串BB就可以构成一个Loop:</p>
+<ol>
+<li>子图是强联通的</li>
+<li>所有从子图外进入子图的边都指向同一个节点<code>header</code>,结果就是头结点会支配循环中的所有其他节点。</li>
+<li>循环是拥有以上特性的最大子集，就是说不能再从CFG中找到其他节点加入到这个子图上，还能让他保持上面的两个特性，即最大强联通子图</li>
+</ol>
+<p>在CS里，符合上述定义的循环被称为<em>自然循环</em>，在LLVM里一般被称为<code>cycle</code></p>
+<h2 id="术语"><a href="#术语" class="headerlink" title="术语"></a>术语</h2><ul>
+<li><p>一个entering block(或者循环前缀)，这个block并非是循环的一部分，他有一条进入loop的边，如果只有一个entering block,并且他的唯一的边就是指向循环的，那么这个block也被称为循环的preheader, preheader是一个不在循环中，但是会支配循环的block</p>
+</li>
+<li><p>latch，就是拥有回边(指向header的边)的block</p>
+</li>
+<li><p>回边，从latch指向header的边</p>
+</li>
+<li><p>exiting边，是指从循环中出到循环外的边，边的在循环中的部分的block叫做exiting block，循环外的部分叫做exit block</p>
+<p><img src="https://llvm.org/docs/_images/loop-terminology.svg" alt="_images/loop-terminology.svg"></p>
+</li>
+</ul>
+<h2 id="注意点"><a href="#注意点" class="headerlink" title="注意点"></a>注意点</h2><p>对循环的定义导致了一系列值得注意的结果：</p>
+<ul>
+<li><p>一个Node最多只能做一个循环的header，因此，一个循环可以用它的header来表示；因为header是循环的唯一入口，那么循环可以被称为Singe-Entry-Multiple-Exit(SEME)的区域</p>
+</li>
+<li><p>对于那些不能从函数的Entry可达的BB, Loop的这些概念是未定义的，同样支配的概念也是未定义的</p>
+</li>
+<li><p>最小的循环由一个指向自己的BB块组成，这个BB是header+latch，如果还有指向外部的边，那他也是exiting block，没有指向自己的边的BB，不算loop，即使他是强联通的</p>
+<p><img src="https://llvm.org/docs/_images/loop-single.svg" alt="_images/loop-single.svg"></p>
+</li>
+<li><p>循环可以相互嵌套。也就是说，一个循环的节点集可以是另一个具有不同循环头的循环的子集。函数中的循环层次结构形成了一个森林：每个顶层循环都是嵌套在其内部的循环树的根。</p>
+<p><img src="https://llvm.org/docs/_images/loop-nested.svg" alt="_images/loop-nested.svg"></p>
+</li>
+<li><p>两个循环要么包含，要么毫无关系，在下面的示例中，左子集和右子集都违反了最大化条件。只有两个子集的合并才被视为循环。下边图里并非两个分开的循环，而是一个大的循环</p>
+<p><img src="https://llvm.org/docs/_images/loop-nonmaximal.svg" alt="_images/loop-nonmaximal.svg"></p>
+</li>
+<li><p>也有可能两个逻辑循环共用一个标头，但 LLVM 将其视为一个循环：</p>
+</li>
+</ul>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="type">int</span> i = <span class="number">0</span>; i &lt; <span class="number">128</span>; ++i)</span><br><span class="line">  <span class="keyword">for</span> (<span class="type">int</span> j = <span class="number">0</span>; j &lt; <span class="number">128</span>; ++j)</span><br><span class="line">    <span class="built_in">body</span>(i,j);</span><br></pre></td></tr></table></figure>
+
+<p><img src="https://llvm.org/docs/_images/loop-merge.svg" alt="_images/loop-merge.svg"></p>
+<p>这里我们看到只有一个header,因此，这里只有一个循环</p>
+<p><code>LoopSimplify</code>pass会检查循环，并且会把header从内外循环中分离出来,这里看出来变成了一个嵌套的循环，分别有两个header – <code>header.outer</code>和<code>header</code></p>
+<p><img src="https://llvm.org/docs/_images/loop-separate.svg" alt="_images/loop-separate.svg"></p>
+<ul>
+<li><p>在CFG中形成一个环，并不一定是loop，下边有一个这样的CFG,这里无法找到一个可以支配其他点的header，这个一般被称为<code>irreducible control-flow</code></p>
+<p><img src="https://llvm.org/docs/_images/loop-irreducible.svg" alt="_images/loop-irreducible.svg"></p>
+</li>
+</ul>
+<p>“reducible”一词源于将CFG逐步折叠成单个节点的能力，通过用一个单节点替换三个基本结构之一：基本块的顺序执行、无环条件分支（或switch）以及自循环的基本块。<a target="_blank" rel="noopener" href="https://en.wikipedia.org/wiki/Control-flow_graph#Reducibility">维基百科</a>有更正式的定义，他基本上就是描述每一个循环都要有一个支配header.</p>
+<ul>
+<li><code>irreducible control-flow</code>可以出现在嵌套循环的任意一层，也就是说，一个循环本身不包含任何循环，它的主体中仍然可以有循环控制流;没有嵌套在另一个循环中的循环仍然可以是外部循环的一部分;在任何两个循环之间都可以有额外的循环其中一个包含在另一个中。然而，LLVM的cycle包括循环和<code>irreducible control-flow</code>。</li>
+<li><code>FixIrreducible</code> Pass可以通过插入新的循环头将<code>irreducible control-flow</code>转换为循环。它不包含在任何默认的优化Pass中，但对于某些后端目标是必需的。</li>
+<li>exiting 边并不是跳出循环的唯一方法。其他可能包括不可达终止符、[[noreturn]]函数、异常、信号和计算机的电源按钮。</li>
+<li>“在”循环内部的BB，如果没有返回循环的路径(即到Latch或Header)，则不被认为是循环的一部分。下面的代码说明了这一点。</li>
+</ul>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="type">unsigned</span> i = <span class="number">0</span>; i &lt;= n; ++i) &#123;</span><br><span class="line">  <span class="keyword">if</span> (c1) &#123;</span><br><span class="line">    <span class="comment">// When reaching this block, we will have exited the loop.</span></span><br><span class="line">    <span class="built_in">do_something</span>();</span><br><span class="line">    <span class="keyword">break</span>;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">if</span> (c2) &#123;</span><br><span class="line">    <span class="comment">// abort(), never returns, so we have exited the loop.</span></span><br><span class="line">    <span class="built_in">abort</span>();</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">if</span> (c3) &#123;</span><br><span class="line">    <span class="comment">// The unreachable allows the compiler to assume that this will not rejoin the loop.</span></span><br><span class="line">    <span class="built_in">do_something</span>();</span><br><span class="line">    __builtin_unreachable();</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">if</span> (c4) &#123;</span><br><span class="line">    <span class="comment">// This statically infinite loop is not nested because control-flow will not continue with the for-loop.</span></span><br><span class="line">    <span class="keyword">while</span>(<span class="literal">true</span>) &#123;</span><br><span class="line">      <span class="built_in">do_something</span>();</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li>不要求控制流最终离开循环，即循环可以是无限的。静态无限循环是没有退出边的循环。动态无限循环具有退出边，但它可能永远不会走。这可能只在某些情况下发生，比如下面代码中的n &#x3D;&#x3D; UINT_MAX。</li>
+</ul>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="type">unsigned</span> i = <span class="number">0</span>; i &lt;= n; ++i)</span><br><span class="line">  <span class="built_in">body</span>(i);</span><br></pre></td></tr></table></figure>
+
+<p>优化器有可能将动态无限循环转换为静态无限循环，例如，当它可以证明现有条件始终为假时。因为退出的边永远不会被占用，所以优化器可以将条件分支更改为无条件分支。</p>
+<p>如果是一个使用llvm.loop.mustprogress元数据注释的循环，则允许编译器假设它最终将终止，即使它无法证明这一点。例如，它可以删除一个在其体内没有任何副作用的mustprogress-loop，即使程序可能永远卡在该循环中。像C和C++这样的语言对某些循环有这样的前向进度保证。还可以查看mustprogress和willreturn函数属性，以及旧的llvm.sideeffect intrinsic。</p>
+<ul>
+<li><p>Header的执行次数表示为<code>loop trip count</code>(或者迭代次数)，如果一个循环根本不会执行，<code>loop guard</code>必然会跳过整个循环</p>
+<p><img src="https://llvm.org/docs/_images/loop-guard.svg" alt="_images/loop-guard.svg"></p>
+</li>
+</ul>
+<p>由于循环头可能做的第一件事就是检查是否有可能执行，如果没有，则立即退出，不做任何工作，因此<code>loop trip count</code>并不是衡量循环迭代次数的最佳方法。例如，在非正数 n 的情况下（循环旋转前），下面代码的头执行次数为 1，尽管循环体根本没有执行。</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="type">int</span> i = <span class="number">0</span>; i &lt; n; ++i)</span><br><span class="line">  <span class="built_in">body</span>(i);</span><br></pre></td></tr></table></figure>
+
+<p>更好的度量方法是<code>回边调用次数</code>，这是在循环之前任何backback被执行的次数。它比进入Header的<code>loop trip count</code>少一次。</p>
+<h2 id="LoopInfo"><a href="#LoopInfo" class="headerlink" title="LoopInfo"></a>LoopInfo</h2><p><code>LoopInfo</code>是关于Loop的一个核心分析Pass，上面给出的定义有几个关键的含义，这些含义对于成功地使用这个接口很重要:</p>
+<ul>
+<li><p>LoopInfo中对于不是循环的<code>cycle</code>是不包含的，因此，它不适用于任何需要完整周期检测正确性的算法。</p>
+<blockquote>
+<p>这里可以理解为LLVM只包含reducible的循环。</p>
+</blockquote>
+</li>
+<li><p>LoopInfo提供了一个接口来枚举所有顶层循环(例如那些不包含在任何其他循环中的循环)。可以从根开始遍历顶层循环的子循环树。</p>
+</li>
+<li><p>在优化过程中变得静态不可达的循环必须从LoopInfo中删除。如果由于某种原因不能做到这一点，则需要进行优化以保持循环的静态可达性。</p>
+</li>
+</ul>
+<h2 id="Loop-Simplify-Form"><a href="#Loop-Simplify-Form" class="headerlink" title="Loop Simplify Form"></a>Loop Simplify Form</h2><p>循环的简化格式是一个标准的可以让某些分析和转换PASS更简单和高效的一种形式，他是在<code>LoopSimplify</code>Pass中实现的，当他成功运行完之后，一个loop就会存在以下几个部分：</p>
+<ol>
+<li>Preheader</li>
+<li>一个单独的回边(也就是隐含的只有一个latch)</li>
+<li>专门的Exit block。也就是说，没有exit block的前缀block是在循环外的。这意味着所有exit block都由loop header支配。</li>
+</ol>
+<h2 id="Loop-Closed-SSA-LCSSA"><a href="#Loop-Closed-SSA-LCSSA" class="headerlink" title="Loop Closed SSA (LCSSA)"></a>Loop Closed SSA (LCSSA)</h2><p>如果程序是在SSA形式，在循环中定义的变量只在循环中使用的话，那么这个程序就是<code>Loop Closed SSA</code>形式</p>
+<p>LLVM的IR都是SSA的，但是不一定需要时LCSSA的，要实现LCSSA，对于循环中穿越了循环边界的值，在每一个exit block中添加一个单独的PHI节点，来将这些值<em>关闭</em>在循环内，可以看下边的代码：</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">c = ...;</span><br><span class="line"><span class="keyword">for</span> (...) &#123;</span><br><span class="line">  <span class="keyword">if</span> (c)</span><br><span class="line">    X1 = ...</span><br><span class="line">  <span class="keyword">else</span></span><br><span class="line">    X2 = ...</span><br><span class="line">  X3 = <span class="built_in">phi</span>(X1, X2);  <span class="comment">// X3 defined</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">... = X3 + <span class="number">4</span>;  <span class="comment">// X3 used, i.e. live</span></span><br><span class="line">               <span class="comment">// outside the loop</span></span><br></pre></td></tr></table></figure>
+
+<p>X3在循环内部定义，但在循环外部使用。在闭环SSA形式中，这将表示为:</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">c = ...;</span><br><span class="line">for (...) &#123;</span><br><span class="line">  if (c)</span><br><span class="line">    X1 = ...</span><br><span class="line">  else</span><br><span class="line">    X2 = ...</span><br><span class="line">  X3 = phi(X1, X2);</span><br><span class="line">&#125;</span><br><span class="line">X4 = phi(X3);</span><br><span class="line"></span><br><span class="line">... = X4 + 4;</span><br></pre></td></tr></table></figure>
+
+<p>这个形式在LLVM中仍然是合法的; 额外的phi节点是完全冗余的，但是所有的LoopPass都需要保留它们。此形式是由LCSSA (-lcssa)Pass来生成的，并在调度LoopPass时由LoopPassManager自动添加。在循环优化完成后，这些额外的phi节点将通过-instcombine删除。</p>
+<p>请注意，exit block位于循环之外，那么既然在循环之外使用了该值，那么如何在循环内“关闭”该值呢?首先，对于phi节点，正如<a target="_blank" rel="noopener" href="https://llvm.org/docs/LangRef.html#id311">LLVM language reference</a>中提到的:“每个incoming value的使用被认为发生在从对应predecessor block到当前块的边缘上”。现在，指向exit block的边被认为是循环之外的，因为如果我们走那条边，它就会把我们带出循环。</p>
+<p>然而，边实际上不包含任何IR，因此在源代码中，我们必须选择一种规约，即使用是发生在当前块中还是在各自的predecessor中。对于LCSSA，我们认为使用发生在predecessor中(以便考虑内部的使用)。</p>
+<p>LCSSA 的主要优点是，它使许多其他循环优化变得更简单。</p>
+<p>首先，一个简单的点就是，如果需要查看所有外部用户，他们可以迭代exit block中的所有(循环关闭)PHI节点(另一种选择是扫描循环中所有指令的defuse链)。</p>
+<p>然后，考虑<code>simple-loop-unswitch</code>来优化上面的循环，因为他是LCSSA形式的，我们知道，循环内定义的值，要么在循环中使用，要么在exit block的关闭循环的PHI节点中使用，在这个例子里，唯一的循环关闭PHI节点是<code>X4</code>,这意味着我们可以直接拷贝循环，并改变对应的<code>X4</code>:</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">c = ...;</span><br><span class="line"><span class="keyword">if</span> (c) &#123;</span><br><span class="line">  <span class="keyword">for</span> (...) &#123;</span><br><span class="line">    <span class="keyword">if</span> (<span class="literal">true</span>)</span><br><span class="line">      X1 = ...</span><br><span class="line">    <span class="keyword">else</span></span><br><span class="line">      X2 = ...</span><br><span class="line">    X3 = <span class="built_in">phi</span>(X1, X2);</span><br><span class="line">  &#125;</span><br><span class="line">&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">  <span class="keyword">for</span> (...) &#123;</span><br><span class="line">    <span class="keyword">if</span> (<span class="literal">false</span>)</span><br><span class="line">      X1<span class="number">&#x27;</span> = ...</span><br><span class="line">    <span class="keyword">else</span></span><br><span class="line">      X2<span class="number">&#x27;</span> = ...</span><br><span class="line">    X3<span class="number">&#x27;</span> = <span class="built_in">phi</span>(X1<span class="number">&#x27;</span>, X2<span class="number">&#x27;</span>);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line">X4 = <span class="built_in">phi</span>(X3, X3<span class="number">&#x27;</span>)</span><br></pre></td></tr></table></figure>
+
+<p>现在，X4的所有使用都将获得更新的值(通常，如果循环是LCSSA形式，在任何循环转换中，我们只需要更新循环关闭PHI节点即可使更改生效)。如果我们没有闭环SSA形式，这意味着X3可以在环外使用。因此，我们将不得不推出X4(即新的X3)，并将X3的所有使用替换为X4。然而，我们应该注意到，因为LLVM为每个Value保留了一个def-use链，我们不需要执行数据流分析来查找和替换所有的use(甚至有一个实用函数，<code>replaceAllUsesWIth</code>,他会遍历def-use链来进行转换)</p>
+<p>另一个重要优点是，归纳变量的所有使用行为都是相同的。如果不这样做，就需要区分变量在其定义的循环之外使用时的情况，例如：</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (i = <span class="number">0</span>; i &lt; <span class="number">100</span>; i++) &#123;</span><br><span class="line">  <span class="keyword">for</span> (j = <span class="number">0</span>; j &lt; <span class="number">100</span>; j++) &#123;</span><br><span class="line">    k = i + j;</span><br><span class="line">    <span class="built_in">use</span>(k);    <span class="comment">// use 1</span></span><br><span class="line">  &#125;</span><br><span class="line">  <span class="built_in">use</span>(k);      <span class="comment">// use 2</span></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>从正常 SSA 形式的外循环来看，k 的第一次使用并不是什么特定的关键行为，而第二次使用的是基数为 100、步长为 1 的归纳变量。不过，在实践中以及在 LLVM 环境中，SCEV 可以有效地处理这些情况。标量演化（scalar-evolution）或 SCEV，是一种分析循环中标量表达式演化并对其进行分类的（分析）Pass。</p>
+<p>一般来说，在LCSSA形式的循环中使用SCEV更容易。根据定义，SCEV可以分析的标量(循环变量)表达式的演变是关于循环的。表达式在LLVM中由<code>LLVM::Instruction</code>表示。如果表达式在两个(或更多)循环中(只有在循环嵌套的情况下才会发生，就像上面的例子一样)，并且您想要获得其演变的分析(从SCEV)，您还必须指定关联的是哪个循环。具体来说，必须使用<code>getSCEVAtScope()</code>。</p>
+<p>但是，如果所有循环都采用LCSSA形式，则每个表达式实际上由两个不同的<code>llvm::Instruction</code>表示。一个在循环内，一个在循环外它是关闭循环的PHI节点，表示最后一次迭代后表达式的值(实际上，我们将每个循环变量表达式分解为两个表达式，因此，每个表达式最多在一个循环中)。现在只需使用<code>getSCEV()</code>即可。以及传递给它的这两个<code>llvm::Instruction</code>中的哪一个就可以消除上下文&#x2F;作用域&#x2F;相对循环的歧义。</p>
+<h2 id="更规范化的形式"><a href="#更规范化的形式" class="headerlink" title="更规范化的形式"></a>更规范化的形式</h2><h3 id="Rotated-Loop"><a href="#Rotated-Loop" class="headerlink" title="Rotated Loop"></a>Rotated Loop</h3><p>循环由<code>LoopRotate</code> Pass来旋转，它将循环转换为do&#x2F;while样式的循环，并在LoopRotate .h中实现。例子:</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">test</span><span class="params">(<span class="type">int</span> n)</span> </span>&#123;</span><br><span class="line">  <span class="keyword">for</span> (<span class="type">int</span> i = <span class="number">0</span>; i &lt; n; i += <span class="number">1</span>)</span><br><span class="line">    <span class="comment">// Loop body</span></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>转换为：</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">test</span><span class="params">(<span class="type">int</span> n)</span> </span>&#123;</span><br><span class="line">  <span class="type">int</span> i = <span class="number">0</span>;</span><br><span class="line">  <span class="keyword">do</span> &#123;</span><br><span class="line">    <span class="comment">// Loop body</span></span><br><span class="line">    i += <span class="number">1</span>;</span><br><span class="line">  &#125; <span class="keyword">while</span> (i &lt; n);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>注意:只有当编译器能证明循环体至少会被执行一次时，这种转换才有效。否则，编译器就必须插入一个<code>guard</code>，在运行时对其进行测试。在上面的示例中，就会变成：</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">test</span><span class="params">(<span class="type">int</span> n)</span> </span>&#123;</span><br><span class="line">  <span class="type">int</span> i = <span class="number">0</span>;</span><br><span class="line">  <span class="keyword">if</span> (n &gt; <span class="number">0</span>) &#123;</span><br><span class="line">    <span class="keyword">do</span> &#123;</span><br><span class="line">      <span class="comment">// Loop body</span></span><br><span class="line">      i += <span class="number">1</span>;</span><br><span class="line">    &#125; <span class="keyword">while</span> (i &lt; n);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>在LLVM IR级别理解循环旋转的影响是很重要的。我们在LLVM IR中继续前面的示例，同时还提供了控制流图(CFG)的图形表示。您可以通过使用<code>view-cfg</code>pass获得相同的图形结果。</p>
+<p>初始的循环编译成下边的IR:</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line">define <span class="type">void</span> @test(i32 %n) &#123;</span><br><span class="line">entry:</span><br><span class="line">  br label %<span class="keyword">for</span>.header</span><br><span class="line"></span><br><span class="line"><span class="keyword">for</span>.header:</span><br><span class="line">  %i = phi i32 [ <span class="number">0</span>, %entry ], [ %i.next, %latch ]</span><br><span class="line">  %cond = icmp slt i32 %i, %n</span><br><span class="line">  br i1 %cond, label %body, label %<span class="built_in">exit</span></span><br><span class="line"></span><br><span class="line">body:</span><br><span class="line">  ; Loop body</span><br><span class="line">  br label %latch</span><br><span class="line"></span><br><span class="line">latch:</span><br><span class="line">  %i.next = add nsw i32 %i, <span class="number">1</span></span><br><span class="line">  br label %<span class="keyword">for</span>.header</span><br><span class="line"></span><br><span class="line"><span class="built_in">exit</span>:</span><br><span class="line">  ret <span class="type">void</span></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><img src="https://llvm.org/docs/_images/loop-terminology-initial-loop.png" alt="_images/loop-terminology-initial-loop.png"></p>
+<p>在解释LoopRotate如何实际转换这个循环之前，先来看看如何将它(手工)转换为do-while样式的循环。</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line">define <span class="type">void</span> @<span class="built_in">test</span>(i32 %n) &#123;</span><br><span class="line">entry:</span><br><span class="line">  br label %body</span><br><span class="line"></span><br><span class="line">body:</span><br><span class="line">  %i = phi i32 [ <span class="number">0</span>, %entry ], [ %i.next, %latch ]</span><br><span class="line">  ; Loop body</span><br><span class="line">  br label %latch</span><br><span class="line"></span><br><span class="line">latch:</span><br><span class="line">  %i.next = add nsw i32 %i, <span class="number">1</span></span><br><span class="line">  %cond = icmp slt i32 %i.next, %n</span><br><span class="line">  br i1 %cond, label %body, label %exit</span><br><span class="line"></span><br><span class="line">exit:</span><br><span class="line">  ret <span class="type">void</span></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><img src="https://llvm.org/docs/_images/loop-terminology-rotated-loop.png" alt="_images/loop-terminology-rotated-loop.png"></p>
+<p>注意两点:</p>
+<ul>
+<li><p>状态检查移到了循环的“底部”，即Latch中。这是LoopRotate通过将循环的头部复制到Latch来完成的。</p>
+</li>
+<li><p>在这种情况下，编译器不能推断出循环肯定会至少执行一次，所以上面的转换是无效的。如上所述，必须插入一个<code>guard</code>，这也是LoopRotate将要做的事情。</p>
+</li>
+</ul>
+<p>LoopRatate将上面的循环转换为：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line">define <span class="type">void</span> @test(i32 %n) &#123;</span><br><span class="line">entry:</span><br><span class="line">  %guard_cond = icmp slt i32 <span class="number">0</span>, %n</span><br><span class="line">  br i1 %guard_cond, label %loop.preheader, label %<span class="built_in">exit</span></span><br><span class="line"></span><br><span class="line">loop.preheader:</span><br><span class="line">  br label %body</span><br><span class="line"></span><br><span class="line">body:</span><br><span class="line">  %i2 = phi i32 [ <span class="number">0</span>, %loop.preheader ], [ %i.next, %latch ]</span><br><span class="line">  br label %latch</span><br><span class="line"></span><br><span class="line">latch:</span><br><span class="line">  %i.next = add nsw i32 %i2, <span class="number">1</span></span><br><span class="line">  %cond = icmp slt i32 %i.next, %n</span><br><span class="line">  br i1 %cond, label %body, label %loop.<span class="built_in">exit</span></span><br><span class="line"></span><br><span class="line">loop.<span class="built_in">exit</span>:</span><br><span class="line">  br label %<span class="built_in">exit</span></span><br><span class="line"></span><br><span class="line"><span class="built_in">exit</span>:</span><br><span class="line">  ret <span class="type">void</span></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><img src="https://llvm.org/docs/_images/loop-terminology-guarded-loop.png" alt="_images/loop-terminology-guarded-loop.png"></p>
+<p>结果比我们预期的要复杂一些，因为LoopRotate确保循环在旋转后处于loop Simplify Form。在本例中，它插入了<code>%loop.preheader</code>BB，这样循环就有一个preheader，它引入了<code>%loop.exit</code>BB，以便循环具有专门的exit(否则，%exit将从%latch和%entry中跳转，但是%entry不包含在循环中)。注意，要成功应用LoopRotate，循环也必须事先处于loop Simplify Form中。</p>
+<blockquote>
+<p>增加loop.exit是保证循环的exit block的predecessor必然在loop内，如前所述，如果没有这个loop.exit，那么exit就会变成loop的exit BB，exit BB的前缀中有entry BB,他不在loop内，破坏了Simplify格式</p>
+</blockquote>
+<p>这种形式的主要优点是，它允许将不变指令(尤其是load指令)提升到preheader中。在非旋转的环路中也可以这样做，但是有一些缺点。让我们用一个例子来说明它们:</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="type">int</span> i = <span class="number">0</span>; i &lt; n; ++i) &#123;</span><br><span class="line">  <span class="keyword">auto</span> v = *p;</span><br><span class="line">  <span class="built_in">use</span>(v);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>我们假设<code>load p</code>是不变的，而 use(v) 是某个使用 v 的语句。如果我们只想执行一次load，可以将它移出循环体，结果就是这样：</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">auto</span> v = *p;</span><br><span class="line"><span class="keyword">for</span> (<span class="type">int</span> i = <span class="number">0</span>; i &lt; n; ++i) &#123;</span><br><span class="line">  <span class="built_in">use</span>(v);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>然而，现在，在n &lt;&#x3D; 0的情况下，在初始形式中，循环体永远不会执行，因此，load永远不会执行。这主要是语义上的问题。考虑n &lt;&#x3D; 0且<code>load p</code>是非法的情况。在初始程序中不会有错误。然而，通过这个转换，我们将引入一个问题，破坏了初始语义。</p>
+<p>为了避免这两个问题，我们可以插入一个<code>guard</code>:</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (n &gt; <span class="number">0</span>) &#123;  <span class="comment">// loop guard</span></span><br><span class="line">  <span class="keyword">auto</span> v = *p;</span><br><span class="line">  <span class="keyword">for</span> (<span class="type">int</span> i = <span class="number">0</span>; i &lt; n; ++i) &#123;</span><br><span class="line">    <span class="built_in">use</span>(v);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这当然更好了，但还可以稍微改进一下。注意，检查n是否大于0会执行两次(其间n不会改变)。一次是在检查保护条件时，一次是在循环的第一次执行时。为了避免这种情况，我们可以进行无条件的第一次执行，并在最后插入循环条件。这实际上意味着将循环转换为do-while循环:</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (<span class="number">0</span> &lt; n) &#123;</span><br><span class="line">  <span class="keyword">auto</span> v = *p;</span><br><span class="line">  <span class="keyword">do</span> &#123;</span><br><span class="line">    <span class="built_in">use</span>(v);</span><br><span class="line">    ++i;</span><br><span class="line">  &#125; <span class="keyword">while</span> (i &lt; n);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>请注意，LoopRotate 通常不进行这种提升。相反，它是 Loop-Invariant Code Motion (-licm)（循环不变代码移动）等其他Pass的辅助转换。</p>
+
+        </div>
+          
+        <div class="top-div">
+          <ol class="top-box"><li class="top-box-item top-box-level-2"><a class="top-box-link" href="#%E9%87%8D%E8%A6%81%E6%80%A7"><span class="top-box-text">重要性</span></a></li><li class="top-box-item top-box-level-2"><a class="top-box-link" href="#%E5%BE%AA%E7%8E%AF%E7%9A%84%E5%AE%9A%E4%B9%89"><span class="top-box-text">循环的定义</span></a></li><li class="top-box-item top-box-level-2"><a class="top-box-link" href="#%E6%9C%AF%E8%AF%AD"><span class="top-box-text">术语</span></a></li><li class="top-box-item top-box-level-2"><a class="top-box-link" href="#%E6%B3%A8%E6%84%8F%E7%82%B9"><span class="top-box-text">注意点</span></a></li><li class="top-box-item top-box-level-2"><a class="top-box-link" href="#LoopInfo"><span class="top-box-text">LoopInfo</span></a></li><li class="top-box-item top-box-level-2"><a class="top-box-link" href="#Loop-Simplify-Form"><span class="top-box-text">Loop Simplify Form</span></a></li><li class="top-box-item top-box-level-2"><a class="top-box-link" href="#Loop-Closed-SSA-LCSSA"><span class="top-box-text">Loop Closed SSA (LCSSA)</span></a></li><li class="top-box-item top-box-level-2"><a class="top-box-link" href="#%E6%9B%B4%E8%A7%84%E8%8C%83%E5%8C%96%E7%9A%84%E5%BD%A2%E5%BC%8F"><span class="top-box-text">更规范化的形式</span></a><ol class="top-box-child"><li class="top-box-item top-box-level-3"><a class="top-box-link" href="#Rotated-Loop"><span class="top-box-text">Rotated Loop</span></a></li></ol></li></ol>
+        </div>
+          
+      </div>
+    </div>
+
+    
+      <div class="next-post">
+        <a class="purple-link" href="/2023/12/17/SVE/">
+          <h3 class="post-title">
+            下一篇：SVE
+          </h3>
+        </a>
+      </div>
+    
+  </div>
+
+
+
+
+
+
+
+
+
+
+<footer>
+<div class="site-footer">
+  <div class="social-container">
+    
+      
+        <a aria-label="跳转至github" href="https://github.com/zq54zquan" target="_blank">
+          <i class="icon icon-github"></i>
+        </a>
+      
+    
+      
+    
+      
+    
+      
+    
+      
+    
+  </div>
+  
+    Powered by <a href="https://hexo.io/" target="_blank">Hexo</a> <a href="https://github.com/f-dong/hexo-theme-minimalism" target="_blank">Theme</a>
+  
+  
+  
+  
+  
+  
+</div>
+</footer>
+<script src='https://unpkg.com/mermaid@7.1.2/dist/mermaid.min.js'></script>
+  <script>
+    if (window.mermaid) {
+      mermaid.initialize({theme: 'forest'});
+    }
+  </script>
+
+
+      </div>
+    </div>
+    
+<script id="hexo-configurations"> window.theme_config = {"image":{"lazyload_enable":true,"photo_zoom":"simple-lightbox"}}; window.is_post = true; </script>
+
+<script src="/js/main.js"></script>
+
+
+
+
+
+
+  <script src="/js/simple-lightbox.min.js"></script><script>document.addEventListener('DOMContentLoaded', function() {new SimpleLightbox('.post-detail .simple-lightbox', {fileExt: false,captionsData:'alt'});});</script></body>
+</html>
+
